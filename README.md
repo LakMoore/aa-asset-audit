@@ -13,16 +13,18 @@ Install this package in the Alliance Auth environment:
 python -m pip install .
 ```
 
-For a released version, install the wheel attached to its GitHub Release:
+To install the latest published release:
 
 ```shell
-python -m pip install "https://github.com/LakMoore/aa-asset-audit/releases/download/vX.Y.Z/aa_asset_audit-X.Y.Z-py3-none-any.whl"
+python -m pip install "https://github.com/LakMoore/aa-asset-audit/releases/latest/download/aa-asset-audit-latest.tar.gz"
 ```
 
-To publish a release, update `project.version` in `pyproject.toml` and push the
-matching tag, for example `v0.1.0`. The release workflow runs the tests, builds
-and validates the wheel and source distribution, then attaches both files to
-the GitHub Release. Installations should pin a specific release tag.
+The release workflow publishes this source archive under a stable asset name,
+so the URL follows the latest GitHub Release. For reproducible installs, use
+the versioned wheel attached to a specific release. To publish a release,
+update `project.version` in `pyproject.toml` and push the matching tag, for
+example `v0.1.0`. The workflow runs the tests, builds and validates both
+distributions, and attaches them to the GitHub Release.
 
 Add the app to `INSTALLED_APPS` in the Alliance Auth settings:
 

@@ -41,6 +41,7 @@ jobs:
           python -m pip install build twine
           python -m build
           python -m twine check dist/*
+          cp dist/aa_asset_audit-*.tar.gz dist/aa-asset-audit-latest.tar.gz
 
       - name: Create GitHub Release
         env:
