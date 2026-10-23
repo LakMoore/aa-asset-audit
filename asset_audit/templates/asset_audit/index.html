@@ -1,0 +1,607 @@
+{% extends "allianceauth/base-bs5.html" %}
+
+{% block page_title %}Asset Audit{% endblock %}
+
+{% block content %}
+<div class="page-header">
+    <h1>Asset Audit</h1>
+</div>
+
+{% if search_performed %}
+<section class="scan-results" aria-labelledby="results-heading">
+    <h2 id="results-heading">Search results</h2>
+    <h3>Search parameters</h3>
+    <dl>
+        <dt>Item types</dt>
+        <dd>{{ search_parameters.item_type_names|join:", "|default:"None" }}</dd>
+        <dt>Market groups</dt>
+        <dd>{{ search_parameters.market_group_names|join:", "|default:"None" }}</dd>
+        <dt>Solar systems</dt>
+        <dd>{{ search_parameters.solar_system_names|join:", "|default:"None" }}</dd>
+    </dl>
+    <h3>Matches ({{ matches|length }})</h3>
+    <button
+        id="download-results-csv"
+        class="btn btn-outline-secondary mb-3"
+        type="button"
+        data-description="{{ csv_description }}"
+    >Download CSV</button>
+    {% if matches %}
+        {% for group in match_groups %}
+            <section aria-label="{{ group.solar_system_name }} - {{ group.location_name }}">
+                <h4>{{ group.solar_system_name }} - {{ group.location_name }}</h4>
+                <div class="table-responsive">
+                    <table class="table table-striped table-condensed">
+                        <thead>
+                            <tr><th>Owner</th><th>Item</th><th>Type</th><th>Quantity</th><th>Reference</th></tr>
+                        </thead>
+                        <tbody>
+                            {% for match in group.matches %}
+                                <tr>
+                                    <td>
+                                        {% if match.owner_type == "corporation" %}
+                                            <img class="asset-corporation-icon" src="{{ match.owner_icon_url }}" alt="">
+                                        {% else %}
+                                            <img class="asset-character-portrait" src="{{ match.owner_icon_url }}" alt="">
+                                        {% endif %}
+                                        {{ match.owner_name }}
+                                    </td>
+                                    <td><img class="asset-type-icon" src="{{ match.type_icon_url }}" alt="">{{ match.type_name }}</td>
+                                    <td>{{ match.result_type }}</td>
+                                    <td>{{ match.quantity }}</td>
+                                    <td>{{ match.reference }}</td>
+                                </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+        {% endfor %}
+    {% else %}
+        <p>No matching assets, contracts, or market orders found in the cached snapshots.</p>
+    {% endif %}
+</section>
+{% endif %}
+
+<div class="row">
+    <section class="col-md-5" aria-labelledby="scan-heading">
+        <h2 id="scan-heading">Search assets, contracts, and market orders</h2>
+        <p>Search cached assets, contract offers, and open market orders for authenticated characters and Director corporations.</p>
+        <form method="post">
+            {% csrf_token %}
+            {% for field in form %}
+                <div class="form-group{% if field.errors %} has-error{% endif %}">
+                    <label for="{{ field.id_for_label }}">{{ field.label }}</label>
+                    {% if field.name == "target_type_names" or field.name == "target_market_group_names" or field.name == "target_solar_system_names" %}
+                        <div class="reference-picker" data-reference-url="{% if field.name == 'target_type_names' %}{{ item_type_reference_url }}{% elif field.name == 'target_market_group_names' %}{{ market_group_reference_url }}{% else %}{{ solar_system_reference_url }}{% endif %}">
+                            {{ field }}
+                            <ul id="{{ field.name }}-options" class="reference-options" role="listbox" hidden></ul>
+                            <span class="visually-hidden" role="status" aria-live="polite"></span>
+                        </div>
+                    {% else %}
+                        {{ field }}
+                    {% endif %}
+                    {% if field.help_text %}<p class="help-block">{{ field.help_text }}</p>{% endif %}
+                    {% for error in field.errors %}<p class="help-block">{{ error }}</p>{% endfor %}
+                </div>
+            {% endfor %}
+            <button class="btn btn-primary" type="submit">Search</button>
+        </form>
+        {% if recent_searches %}
+            <section class="mt-4" aria-labelledby="recent-searches-heading">
+                <h3 id="recent-searches-heading">Recent searches</h3>
+                <ol class="list-unstyled mb-0">
+                    {% for strategy in recent_searches %}
+                        <li class="d-flex flex-wrap align-items-center justify-content-between gap-2 py-2 border-bottom">
+                            <span>
+                                {% if strategy.query.item_type_names %}{{ strategy.query.item_type_names|join:", " }}{% endif %}
+                                {% if strategy.query.market_group_names %}{% if strategy.query.item_type_names %}, {% endif %}{{ strategy.query.market_group_names|join:", " }}{% endif %}
+                                in {{ strategy.query.solar_system_names|join:", " }}
+                            </span>
+                            <form method="post">
+                                {% csrf_token %}
+                                <input type="hidden" name="target_type_names" value="{{ strategy.query.item_type_names|join:', ' }}">
+                                <input type="hidden" name="target_market_group_names" value="{{ strategy.query.market_group_names|join:', ' }}">
+                                <input type="hidden" name="target_solar_system_names" value="{{ strategy.query.solar_system_names|join:', ' }}">
+                                <button class="btn btn-sm btn-outline-primary" type="submit">Search again</button>
+                            </form>
+                        </li>
+                    {% endfor %}
+                </ol>
+            </section>
+        {% endif %}
+    </section>
+
+    <section class="col-md-7" aria-labelledby="characters-heading">
+        <h2 id="characters-heading">Character and corporation cache</h2>
+        <button id="refresh-assets-button" class="btn btn-outline-primary" type="button">Refresh expired endpoints</button>
+        <span id="refresh-progress" class="ms-2" role="status" aria-live="polite"></span>
+        {% if characters %}
+            <div class="table-responsive mt-3">
+                <table class="table table-striped align-middle">
+                    <thead>
+                        <tr><th>Owner</th><th>Assets expiry</th><th>Contracts expiry</th><th>Contract items expiry</th><th>Market orders expiry</th><th>Access</th></tr>
+                    </thead>
+                    <tbody>
+                        {% for character in characters %}
+                            <tr data-snapshot-row data-character-id="{{ character.character_id }}" data-refreshable="{{ character.refreshable|yesno:'true,false' }}" data-refresh-url="{{ refresh_url_prefix }}{{ character.character_id }}/">
+                                <td>
+                                    <img class="character-cache-portrait" src="{{ character.portrait_url }}" alt="">
+                                    {{ character.character_name }}
+                                </td>
+                                {% for endpoint in character.endpoint_rows %}
+                                    <td data-endpoint-cell="{{ endpoint.key }}" data-refreshable="{{ endpoint.refreshable|yesno:'true,false' }}" data-timer-active="{{ endpoint.timer_active|yesno:'true,false' }}" data-has-scope="{{ endpoint.has_scope|yesno:'true,false' }}" data-fetched-at="{{ endpoint.fetched_at|date:'c' }}">
+                                        {% if endpoint.timer_active %}
+                                            {% if endpoint.expires_at %}
+                                                <time data-expiry datetime="{{ endpoint.expires_at|date:'c' }}" class="{{ endpoint.freshness_class }}">{{ endpoint.expires_at|date:"Y-m-d H:i:s T" }}</time>
+                                            {% else %}
+                                                <time data-expiry class="{{ endpoint.freshness_class }}">No expiry data</time>
+                                            {% endif %}
+                                        {% endif %}
+                                        <span data-freshness class="{{ endpoint.freshness_class }}">{{ endpoint.freshness_label }}</span>
+                                    </td>
+                                {% endfor %}
+                                <td>
+                                    {% if character.has_asset_scope %}Assets ready{% else %}<span class="text-warning">Missing asset scope</span>{% endif %}<br>
+                                    {% if character.has_contract_scope %}Contracts ready{% else %}<span class="text-warning">Missing contracts scope</span>{% endif %}<br>
+                                    {% if character.has_order_scope %}Orders ready{% else %}<span class="text-warning">Missing orders scope</span>{% endif %}
+                                    {% if character.has_roles_scope %}<span class="visually-hidden">Corporation roles available</span>{% else %}<br><span class="text-warning">Missing corporation-roles scope</span>{% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                        {% for corporation in corporations %}
+                            <tr data-snapshot-row data-corporation-id="{{ corporation.corporation_id }}" data-refreshable="{{ corporation.refreshable|yesno:'true,false' }}" data-refresh-url="{{ refresh_corporation_url_prefix }}{{ corporation.corporation_id }}/">
+                                <td>
+                                    <img class="corporation-cache-logo" src="{{ corporation.logo_url }}" alt="">
+                                    {{ corporation.corporation_name }}
+                                </td>
+                                {% for endpoint in corporation.endpoint_rows %}
+                                    <td data-endpoint-cell="{{ endpoint.key }}" data-refreshable="{{ endpoint.refreshable|yesno:'true,false' }}" data-timer-active="{{ endpoint.timer_active|yesno:'true,false' }}" data-has-scope="{{ endpoint.has_scope|yesno:'true,false' }}" data-fetched-at="{{ endpoint.fetched_at|date:'c' }}">
+                                        {% if endpoint.timer_active %}
+                                            {% if endpoint.expires_at %}
+                                                <time data-expiry datetime="{{ endpoint.expires_at|date:'c' }}" class="{{ endpoint.freshness_class }}">{{ endpoint.expires_at|date:"Y-m-d H:i:s T" }}</time>
+                                            {% else %}
+                                                <time data-expiry class="{{ endpoint.freshness_class }}">No expiry data</time>
+                                            {% endif %}
+                                        {% endif %}
+                                        <span data-freshness class="{{ endpoint.freshness_class }}">{{ endpoint.freshness_label }}</span>
+                                    </td>
+                                {% endfor %}
+                                <td>
+                                    Director {{ corporation.director_character_id }}<br>
+                                    {% if corporation.has_asset_scope %}Assets ready{% else %}<span class="text-warning">Missing asset scope</span>{% endif %}<br>
+                                    {% if corporation.has_contract_scope %}Contracts ready{% else %}<span class="text-warning">Missing contracts scope</span>{% endif %}<br>
+                                    {% if corporation.has_order_scope %}Orders ready{% else %}<span class="text-warning">Missing orders scope</span>{% endif %}
+                                </td>
+                            </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        {% else %}
+            <p class="mt-3">No authenticated characters found.</p>
+        {% endif %}
+    </section>
+</div>
+{% endblock %}
+
+{% block extra_css %}
+{{ block.super }}
+<style>
+    .reference-picker {
+        position: relative;
+    }
+
+    .reference-options {
+        position: absolute;
+        z-index: 1050;
+        right: 0;
+        left: 0;
+        overflow-y: auto;
+        margin: 0;
+        padding: 0.25rem 0;
+        list-style: none;
+        background: #fff;
+        border: 1px solid #9aa4ad;
+        border-radius: 0.25rem;
+        box-shadow: 0 0.25rem 0.75rem rgb(0 0 0 / 18%);
+    }
+
+    .reference-picker[data-placement="below"] .reference-options {
+        top: calc(100% + 0.25rem);
+    }
+
+    .reference-picker[data-placement="above"] .reference-options {
+        bottom: calc(100% + 0.25rem);
+    }
+
+    .reference-options[hidden] {
+        display: none;
+    }
+
+    .reference-option {
+        padding: 0.45rem 0.75rem;
+        cursor: pointer;
+    }
+
+    .reference-option[aria-selected="true"],
+    .reference-option:hover {
+        color: #fff;
+        background: #245b78;
+    }
+</style>
+<style>
+    .character-cache-portrait {
+        width: 40px;
+        height: 40px;
+        margin-right: 0.5rem;
+        border-radius: 50%;
+        object-fit: cover;
+        vertical-align: middle;
+    }
+
+    .asset-character-portrait {
+        width: 40px;
+        height: 40px;
+        margin-right: 0.5rem;
+        border-radius: 50%;
+        object-fit: cover;
+        vertical-align: middle;
+    }
+
+    .corporation-cache-logo,
+    .asset-corporation-icon {
+        width: 40px;
+        height: 40px;
+        margin-right: 0.5rem;
+        object-fit: contain;
+        vertical-align: middle;
+    }
+
+    .asset-type-icon {
+        width: 32px;
+        height: 32px;
+        margin-right: 0.5rem;
+        object-fit: contain;
+        vertical-align: middle;
+    }
+</style>
+{% endblock %}
+
+{% block extra_script %}
+(function () {
+    document.querySelectorAll(".reference-picker").forEach(function (picker) {
+        const input = picker.querySelector("input");
+        const options = picker.querySelector('[role="listbox"]');
+        const status = picker.querySelector('[role="status"]');
+        let activeIndex = -1;
+        let debounceTimer;
+        let activeRequest;
+
+        function optionElements() {
+            return Array.from(options.querySelectorAll('[role="option"]'));
+        }
+
+        function hideOptions() {
+            options.hidden = true;
+            input.setAttribute("aria-expanded", "false");
+            input.removeAttribute("aria-activedescendant");
+            activeIndex = -1;
+        }
+
+        function positionOptions() {
+            if (options.hidden) return;
+            const bounds = picker.getBoundingClientRect();
+            const gap = 8;
+            const spaceAbove = bounds.top;
+            const spaceBelow = window.innerHeight - bounds.bottom;
+            const preferAbove = spaceBelow < 180 && spaceAbove > spaceBelow;
+            const availableSpace = Math.max(
+                80,
+                (preferAbove ? spaceAbove : spaceBelow) - gap
+            );
+            picker.dataset.placement = preferAbove ? "above" : "below";
+            options.style.maxHeight = `${Math.min(240, availableSpace)}px`;
+        }
+
+        function showOptions() {
+            if (!optionElements().length) return;
+            options.hidden = false;
+            input.setAttribute("aria-expanded", "true");
+            positionOptions();
+        }
+
+        function selectOption(option) {
+            const segmentStart = input.value.lastIndexOf(",") + 1;
+            const prefix = input.value.slice(0, segmentStart);
+            const spacing = input.value.slice(segmentStart).match(/^\s*/)[0];
+            input.value = `${prefix}${spacing}${option.textContent}, `;
+            hideOptions();
+            input.dispatchEvent(new Event("input", { bubbles: true }));
+            input.focus();
+        }
+
+        function setActiveOption(index) {
+            const availableOptions = optionElements();
+            if (!availableOptions.length) return;
+            activeIndex = (index + availableOptions.length) % availableOptions.length;
+            availableOptions.forEach(function (option, optionIndex) {
+                const selected = optionIndex === activeIndex;
+                option.setAttribute("aria-selected", selected ? "true" : "false");
+                if (selected) {
+                    input.setAttribute("aria-activedescendant", option.id);
+                    option.scrollIntoView({ block: "nearest" });
+                }
+            });
+        }
+
+        input.addEventListener("input", function () {
+            window.clearTimeout(debounceTimer);
+            if (activeRequest) activeRequest.abort();
+
+            const segmentStart = input.value.lastIndexOf(",") + 1;
+            const query = input.value.slice(segmentStart).trim();
+            options.replaceChildren();
+            hideOptions();
+            status.textContent = "";
+            if (query.length < 2) return;
+
+            debounceTimer = window.setTimeout(async function () {
+                activeRequest = new AbortController();
+                try {
+                    const url = new URL(picker.dataset.referenceUrl, window.location.origin);
+                    url.searchParams.set("q", query);
+                    const response = await fetch(url, { signal: activeRequest.signal });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || "Search unavailable.");
+
+                    const names = new Set();
+                    data.results.forEach(function (result) {
+                        const label = result.label || result.name;
+                        if (!label || names.has(label)) return;
+                        names.add(label);
+                        const option = document.createElement("li");
+                        option.id = `${options.id}-${names.size}`;
+                        option.className = "reference-option";
+                        option.setAttribute("role", "option");
+                        option.setAttribute("aria-selected", "false");
+                        option.textContent = label;
+                        option.addEventListener("mousedown", function (event) {
+                            event.preventDefault();
+                            selectOption(option);
+                        });
+                        options.appendChild(option);
+                    });
+                    status.textContent = names.size
+                        ? `${names.size} name suggestions available.`
+                        : "No matching names.";
+                    showOptions();
+                } catch (error) {
+                    if (error.name !== "AbortError") status.textContent = error.message;
+                }
+            }, 180);
+        });
+
+        input.addEventListener("keydown", function (event) {
+            const availableOptions = optionElements();
+            if (event.key === "ArrowDown" && availableOptions.length) {
+                event.preventDefault();
+                showOptions();
+                setActiveOption(activeIndex + 1);
+            } else if (event.key === "ArrowUp" && availableOptions.length) {
+                event.preventDefault();
+                showOptions();
+                setActiveOption(activeIndex < 0 ? availableOptions.length - 1 : activeIndex - 1);
+            } else if (event.key === "Enter" && activeIndex >= 0) {
+                event.preventDefault();
+                selectOption(availableOptions[activeIndex]);
+            } else if (event.key === "Escape") {
+                hideOptions();
+            }
+        });
+
+        input.addEventListener("blur", function () {
+            window.setTimeout(hideOptions, 120);
+        });
+
+        window.addEventListener("resize", positionOptions);
+        window.addEventListener("scroll", positionOptions, true);
+    });
+})();
+
+(function () {
+    const rows = document.querySelectorAll("tr[data-snapshot-row]");
+    if (!rows.length) return;
+
+    function updateExpiryStatuses() {
+        const now = Date.now();
+        const amberLimit = now + 45 * 60 * 1000;
+        const recentUpdateLimit = now - 5 * 60 * 1000;
+        rows.forEach(function (row) {
+            row.querySelectorAll("[data-endpoint-cell]").forEach(function (cell) {
+                if (cell.dataset.timerActive !== "true") return;
+                const expiry = cell.querySelector("[data-expiry]");
+                const freshness = cell.querySelector("[data-freshness]");
+                if (!expiry || !freshness) return;
+
+                const expiresAt = expiry.dateTime ? Date.parse(expiry.dateTime) : NaN;
+                const fetchedAt = Date.parse(cell.dataset.fetchedAt || "");
+                let freshnessClass = "text-danger";
+                let freshnessLabel = "Missing expiry";
+                if (Number.isFinite(expiresAt)) {
+                    if (expiresAt < now) {
+                        freshnessLabel = "Expired";
+                    } else if (Number.isFinite(fetchedAt) && fetchedAt >= recentUpdateLimit) {
+                        freshnessClass = "text-success";
+                        freshnessLabel = "Fresh";
+                    } else if (expiresAt <= amberLimit) {
+                        freshnessClass = "text-warning";
+                        freshnessLabel = "Expiring soon";
+                    } else {
+                        freshnessClass = "text-success";
+                        freshnessLabel = "Fresh";
+                    }
+                }
+
+                expiry.classList.remove("text-success", "text-warning", "text-danger");
+                freshness.classList.remove("text-success", "text-warning", "text-danger");
+                expiry.classList.add(freshnessClass);
+                freshness.classList.add(freshnessClass);
+                freshness.textContent = freshnessLabel;
+            });
+        });
+    }
+
+    updateExpiryStatuses();
+    window.setInterval(updateExpiryStatuses, 30_000);
+})();
+
+(function () {
+    const button = document.getElementById("refresh-assets-button");
+    const progress = document.getElementById("refresh-progress");
+    if (!button || !progress) return;
+
+    button.addEventListener("click", async function () {
+        const rows = Array.from(
+            document.querySelectorAll('tr[data-refreshable="true"]')
+        );
+        if (!rows.length) {
+            progress.textContent = "No expired or missing endpoints need refreshing.";
+            return;
+        }
+
+        const csrfToken = document.querySelector('[name="csrfmiddlewaretoken"]')?.value;
+        let nextIndex = 0;
+        let completed = 0;
+        let failed = 0;
+        button.disabled = true;
+        progress.textContent = `Refreshing 0 of ${rows.length} owners...`;
+
+        function applyEndpointStatus(row, key, status) {
+            const cell = row.querySelector(`[data-endpoint-cell="${key}"]`);
+            if (!cell) return;
+            const freshness = cell.querySelector("[data-freshness]");
+            if (!freshness) return;
+            if (cell.dataset.hasScope === "false") return;
+            if (status.error) {
+                freshness.textContent = status.freshness_label || status.error;
+                freshness.className = status.freshness_class || "text-danger";
+                cell.dataset.refreshable = status.refreshable ? "true" : "false";
+                return;
+            }
+
+            let expiry = cell.querySelector("[data-expiry]");
+            if (status.timer_active && !expiry) {
+                expiry = document.createElement("time");
+                expiry.dataset.expiry = "";
+                cell.insertBefore(expiry, freshness);
+            } else if (!status.timer_active && expiry) {
+                expiry.remove();
+                expiry = null;
+            }
+            cell.dataset.timerActive = status.timer_active ? "true" : "false";
+            cell.dataset.fetchedAt = status.fetched_at || "";
+            if (expiry) {
+                if (status.expires_at) {
+                    const expiresAt = new Date(status.expires_at);
+                    expiry.dateTime = expiresAt.toISOString();
+                    expiry.textContent = expiresAt.toLocaleString();
+                } else {
+                    expiry.removeAttribute("datetime");
+                    expiry.textContent = "No expiry data";
+                }
+                expiry.className = status.freshness_class;
+            }
+            freshness.textContent = status.freshness_label;
+            freshness.className = status.freshness_class;
+            cell.dataset.refreshable = status.refreshable ? "true" : "false";
+        }
+
+        async function refreshNext() {
+            while (nextIndex < rows.length) {
+                const row = rows[nextIndex++];
+                try {
+                    const response = await fetch(row.dataset.refreshUrl, {
+                        method: "POST",
+                        headers: { "X-CSRFToken": csrfToken },
+                    });
+                    const data = await response.json();
+                    if (!response.ok) throw new Error(data.error || "Refresh failed.");
+                    Object.entries(data.endpoints || {}).forEach(function ([key, status]) {
+                        applyEndpointStatus(row, key, status);
+                        if (status.error) failed += 1;
+                    });
+                    row.dataset.refreshable = Array.from(
+                        row.querySelectorAll("[data-endpoint-cell]")
+                    ).some(function (cell) {
+                        return cell.dataset.refreshable === "true";
+                    }) ? "true" : "false";
+                } catch (error) {
+                    failed += 1;
+                    const freshness = row.querySelector("[data-freshness]");
+                    freshness.textContent = error.message;
+                    freshness.className = "text-danger";
+                }
+
+                completed += 1;
+                progress.textContent = `Refreshing ${completed} of ${rows.length} owners...`;
+            }
+        }
+
+        await Promise.all(
+            Array.from({ length: Math.min(4, rows.length) }, refreshNext)
+        );
+        button.disabled = false;
+        progress.textContent = failed
+            ? `Finished ${completed} of ${rows.length}; ${failed} refreshes failed.`
+            : `Finished refreshing ${completed} owners.`;
+    });
+})();
+
+(function () {
+    const button = document.getElementById("download-results-csv");
+    if (!button) return;
+
+    function csvCell(value) {
+        return `"${String(value).replaceAll('"', '""')}"`;
+    }
+
+    button.addEventListener("click", function () {
+        const rows = [
+            [button.dataset.description],
+            ["Owner", "Item", "Location", "Type", "Quantity", "Reference"],
+        ];
+        document
+            .querySelectorAll('.scan-results section[aria-label]')
+            .forEach(function (locationSection) {
+                const location = locationSection.querySelector("h4")?.textContent.trim() || "";
+                locationSection.querySelectorAll("tbody tr").forEach(function (resultRow) {
+                    const cells = Array.from(resultRow.cells);
+                    rows.push([
+                        cells[0]?.textContent.trim() || "",
+                        cells[1]?.textContent.trim() || "",
+                        location,
+                        cells[2]?.textContent.trim() || "",
+                        cells[3]?.textContent.trim() || "",
+                        cells[4]?.textContent.trim() || "",
+                    ]);
+                });
+            });
+
+        const csv = rows
+            .map(function (row) {
+                return row.map(csvCell).join(",");
+            })
+            .join("\r\n");
+        const blob = new Blob(["\uFEFF", csv], { type: "text/csv;charset=utf-8" });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement("a");
+        link.href = url;
+        link.download = "asset-audit-results.csv";
+        document.body.appendChild(link);
+        link.click();
+        link.remove();
+        window.setTimeout(function () { URL.revokeObjectURL(url); }, 0);
+    });
+})();
+{% endblock %}
